@@ -17,8 +17,8 @@ logger = logging.getLogger()
 chromedriver_path = '/Users/bsridharpatnaik/Downloads/chromedriver-mac-arm64/chromedriver'
 
 # Parameters
-start_page = 12  # Starting page number (e.g., 5)
-no_of_pages = 12  # Number of pages to scrape (e.g., 10)
+start_page = 10  # Starting page number (e.g., 5)
+no_of_pages = 2  # Number of pages to scrape (e.g., 10)
 
 # Calculate end page
 end_page = start_page + no_of_pages - 1
@@ -29,9 +29,6 @@ output_file = f'Durg_{start_page}_to_{end_page}.csv'
 # Initialize the webdriver using Service and Options for Headless Chrome
 service = Service(chromedriver_path)
 options = webdriver.ChromeOptions()
-#options.add_argument("--headless")  # Enable headless mode
-#options.add_argument("--disable-gpu")  # Disable GPU acceleration for more speed
-#options.add_argument("--no-sandbox")  # Disable sandboxing for Linux compatibility
 options.add_argument("--window-size=1920,1080")  # Set window size to ensure everything is rendered properly
 
 logger.info("Initializing the webdriver...")
@@ -49,6 +46,40 @@ columns = [
 with open(output_file, mode='w', newline='', encoding='utf-8') as file:
     writer = csv.writer(file)
     writer.writerow(columns)
+
+
+def retry_fetch_data(driver, row_index, page_count, start_page):
+    """
+    Retry fetching the data either by refreshing the details page or by re-clicking the 'Details' link.
+    """
+    try:
+        current_url = driver.current_url
+        if "Promoter_Reg_Only_View_Application_new.aspx" in current_url:
+            # Refresh details page
+            logger.info(f"Retrying data fetch for row {row_index + 1} on page {start_page + page_count}...")
+            driver.refresh()
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
+            )
+        else:
+            # Refresh main page and retry clicking 'Details' link
+            logger.info(f"Retrying click on 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
+            driver.refresh()
+            for i in range(start_page + page_count - 1):
+                next_button = driver.find_element(By.LINK_TEXT, 'Next')
+                next_button.click()
+                time.sleep(5)  # Wait for the page to load
+
+            details_link = driver.find_element(By.ID, f"ContentPlaceHolder1_gv_ProjectList_lnk_View_{row_index}")
+            details_link.click()
+
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
+            )
+    except Exception as e:
+        logger.error(f"Retry failed for row {row_index + 1} on page {start_page + page_count}. Error: {str(e)}")
+        sys.exit(1)  # Terminate after retry failure
+
 
 try:
     # Open the URL
@@ -112,7 +143,7 @@ try:
 
                     # Extract details from the details page
                     project_status = driver.find_element(By.ID, "ContentPlaceHolder1_ApplicantType").get_attribute("value")
-                    detail_authorized_name = authorized_name  # Use the same authorized name as before
+                    detail_authorized_name = authorized_name
                     project_address = driver.find_element(By.ID, "ContentPlaceHolder1_AadharNumber").text.strip()
                     state = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_State_Name option[selected='selected']").text.strip()
                     district_detail = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_District_Name option[selected='selected']").text.strip()
@@ -149,9 +180,8 @@ try:
                     logger.warning(f"No 'Details' link found for row {row_index + 1} on page {start_page + page_count}. Skipping...")
             except Exception as e:
                 logger.error(f"Error clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}: {str(e)}")
-                # Print the page and row where the error occurred
-                logger.error(f"Execution terminated at page {start_page + page_count} and row {row_index + 1}")
-                sys.exit(1)
+                logger.info(f"Retrying the process for row {row_index + 1} on page {start_page + page_count}...")
+                retry_fetch_data(driver, row_index, page_count, start_page)
 
         # Check if there is a next page and the limit hasn't been reached
         if page_count < no_of_pages - 1:
@@ -159,7 +189,7 @@ try:
                 next_button = driver.find_element(By.LINK_TEXT, 'Next')
                 logger.info(f"Navigating to page {start_page + page_count + 1}...")
                 next_button.click()
-                time.sleep(5)  # Updated wait time to 10 seconds
+                time.sleep(5)  # Updated wait time to 5 seconds
             except Exception as e:
                 logger.info(f"No more pages to scrape or error occurred while clicking Next. Exiting loop at page {start_page + page_count}")
                 sys.exit(1)  # Exit when an error occurs
