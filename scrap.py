@@ -6,6 +6,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 from bs4 import BeautifulSoup
 import sys
 
@@ -17,186 +18,214 @@ logger = logging.getLogger()
 chromedriver_path = '/Users/bsridharpatnaik/Downloads/chromedriver-mac-arm64/chromedriver'
 
 # Parameters
-start_page = 10  # Starting page number (e.g., 5)
-no_of_pages = 2  # Number of pages to scrape (e.g., 10)
+start_page = 1  # Starting page number
+no_of_pages = 1  # Number of pages to scrape
 
 # Calculate end page
 end_page = start_page + no_of_pages - 1
 
 # Parametrized output file name
-output_file = f'Durg_{start_page}_to_{end_page}.csv'
-
-# Initialize the webdriver using Service and Options for Headless Chrome
-service = Service(chromedriver_path)
-options = webdriver.ChromeOptions()
-options.add_argument("--window-size=1920,1080")  # Set window size to ensure everything is rendered properly
-
-logger.info("Initializing the webdriver...")
-driver = webdriver.Chrome(service=service, options=options)
-
-# CSV file setup
-columns = [
-    'Project Name', 'Registration Number', 'Authorized Name', 'Promoter Name', 'Project Type', 'District',
-    'Tehsil', 'Approved Date', 'Proposed End Date', 'Extended Proposed End Date', 'Website',
-    'Project Status', 'Detail Authorized Name', 'Project Address', 'State', 'District (Detail)',
-    'Tehsil (Detail)', 'Email', 'Mobile'
-]
-
-# Write the header to the CSV file
-with open(output_file, mode='w', newline='', encoding='utf-8') as file:
-    writer = csv.writer(file)
-    writer.writerow(columns)
+output_file = f'Raipur_{start_page}_to_{end_page}.csv'
 
 
-def retry_fetch_data(driver, row_index, page_count, start_page):
+# Initialize the WebDriver
+def initialize_browser():
+    service = Service(chromedriver_path)
+    options = webdriver.ChromeOptions()
+    options.add_argument("--window-size=1920,1080")
+    logger.info("Initializing the webdriver...")
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
+
+
+def select_display_100_rows(driver):
     """
-    Retry fetching the data either by refreshing the details page or by re-clicking the 'Details' link.
+    Select 100 rows to display from the dropdown.
     """
     try:
-        current_url = driver.current_url
-        if "Promoter_Reg_Only_View_Application_new.aspx" in current_url:
-            # Refresh details page
-            logger.info(f"Retrying data fetch for row {row_index + 1} on page {start_page + page_count}...")
-            driver.refresh()
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
-            )
-        else:
-            # Refresh main page and retry clicking 'Details' link
-            logger.info(f"Retrying click on 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
-            driver.refresh()
-            for i in range(start_page + page_count - 1):
-                next_button = driver.find_element(By.LINK_TEXT, 'Next')
-                next_button.click()
-                time.sleep(5)  # Wait for the page to load
-
-            details_link = driver.find_element(By.ID, f"ContentPlaceHolder1_gv_ProjectList_lnk_View_{row_index}")
-            details_link.click()
-
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
-            )
+        logger.info("Selecting '100 rows per page' from the dropdown...")
+        dropdown = Select(driver.find_element(By.NAME, "ContentPlaceHolder1_gv_ProjectList_length"))
+        dropdown.select_by_value("100")  # Select the option with value "100"
+        time.sleep(5)  # Wait for the page to refresh and display 100 rows
     except Exception as e:
-        logger.error(f"Retry failed for row {row_index + 1} on page {start_page + page_count}. Error: {str(e)}")
-        sys.exit(1)  # Terminate after retry failure
+        logger.error(f"Error selecting '100 rows per page': {str(e)}")
+
+def select_display_10_rows(driver):
+    """
+    Select 100 rows to display from the dropdown.
+    """
+    try:
+        logger.info("Selecting '100 rows per page' from the dropdown...")
+        dropdown = Select(driver.find_element(By.NAME, "ContentPlaceHolder1_gv_ProjectList_length"))
+        dropdown.select_by_value("10")  # Select the option with value "100"
+        time.sleep(5)  # Wait for the page to refresh and display 100 rows
+    except Exception as e:
+        logger.error(f"Error selecting '100 rows per page': {str(e)}")
+
+def navigate_to_page(driver, start_page, current_page):
+    logger.info(f"Navigating to page {start_page}...")
+    while current_page < start_page:
+        next_button = driver.find_element(By.LINK_TEXT, 'Next')
+        next_button.click()
+        time.sleep(5)  # Wait for the page to load
+        current_page += 1
+    return current_page
 
 
+def restart_browser_and_resume(row_index, page_count, current_page, retry_row):
+    global driver
+    logger.info("Closing the browser and restarting...")
+    driver.quit()
+
+    # Re-initialize the browser
+    driver = initialize_browser()
+    url = "https://rera.cgstate.gov.in/Approved_project_List.aspx"
+    driver.get(url)
+
+    logger.info("Waiting for user interaction to select dropdown and enter security code...")
+    time.sleep(5)  # Wait for user interaction
+
+    # Navigate back to the correct page and select 100 rows
+    logger.info(f"Retrying navigation to page {start_page + page_count}...")
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_gv_ProjectList"))
+    )
+    select_display_100_rows(driver)
+    navigate_to_page(driver, start_page + page_count, current_page)
+
+    # Return the updated driver and retry flag set to true
+    return driver, retry_row
+
+
+def scrape_data(driver, row_index, page_count):
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    rows = soup.find("table", {"id": "ContentPlaceHolder1_gv_ProjectList"}).find("tbody").find_all("tr")
+    row = rows[row_index]
+    cells = row.find_all("td")
+
+    project_name = cells[1].text.strip()
+    registration_number = cells[2].text.strip()
+    authorized_name = cells[3].text.strip()
+    promoter_name = cells[4].text.strip()
+    project_type = cells[5].text.strip()
+    district = cells[6].text.strip()
+    tehsil = cells[7].text.strip()
+    approved_date = cells[8].text.strip()
+    proposed_end_date = cells[9].text.strip()
+    extended_end_date = cells[10].text.strip()
+    website = cells[11].find("a")["href"] if cells[11].find("a") else ""
+
+    return {
+        "project_name": project_name,
+        "registration_number": registration_number,
+        "authorized_name": authorized_name,
+        "promoter_name": promoter_name,
+        "project_type": project_type,
+        "district": district,
+        "tehsil": tehsil,
+        "approved_date": approved_date,
+        "proposed_end_date": proposed_end_date,
+        "extended_end_date": extended_end_date,
+        "website": website
+    }
+
+
+# Initialize the CSV file with headers
+with open(output_file, mode='w', newline='', encoding='utf-8') as file:
+    writer = csv.writer(file)
+    writer.writerow([
+        'Project Name', 'Registration Number', 'Authorized Name', 'Promoter Name', 'Project Type', 'District',
+        'Tehsil', 'Approved Date', 'Proposed End Date', 'Extended Proposed End Date', 'Website',
+        'Project Status', 'Detail Authorized Name', 'Project Address', 'State', 'District (Detail)',
+        'Tehsil (Detail)', 'Email', 'Mobile'
+    ])
+
+# Start scraping
 try:
-    # Open the URL
+    driver = initialize_browser()
+
     url = "https://rera.cgstate.gov.in/Approved_project_List.aspx"
     logger.info(f"Opening the URL: {url}")
     driver.get(url)
 
-    # Wait for 1 minute to allow the user to select the dropdown and enter the security code
-    logger.info("Waiting for 1 minute to allow user interaction...")
-    time.sleep(60)
+    logger.info("Waiting for 1 minute for user interaction...")
+    time.sleep(5)
 
-    # Wait until the table is present
-    logger.info("Waiting for the table to be present on the page...")
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_gv_ProjectList"))
     )
 
-    # Skip to the start page by clicking "Next" the required number of times
-    logger.info(f"Skipping to start page {start_page}...")
-    current_page = 1
-    while current_page < start_page:
-        next_button = driver.find_element(By.LINK_TEXT, 'Next')
-        next_button.click()
-        time.sleep(5)  # Wait time to ensure the next page loads
-        current_page += 1
+    # Select '100' from the dropdown to display 100 rows per page
+    select_display_100_rows(driver)
 
-    # Scrape the data from start_page to end_page
+    current_page = 1
+    current_page = navigate_to_page(driver, start_page, current_page)
+
     page_count = 0
+    retry_row = None  # Track the row to retry if the error occurs
+
     while page_count < no_of_pages:
         logger.info(f"Scraping data from page {start_page + page_count}...")
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-        # Find all rows in the table
-        rows = soup.find("table", {"id": "ContentPlaceHolder1_gv_ProjectList"}).find("tbody").find_all("tr")
+        row_start = retry_row if retry_row is not None else 0  # Start from the retry row if applicable
 
-        for row_index, row in enumerate(rows):
-            cells = row.find_all("td")
-            project_name = cells[1].text.strip()
-            registration_number = cells[2].text.strip()
-            authorized_name = cells[3].text.strip()
-            promoter_name = cells[4].text.strip()
-            project_type = cells[5].text.strip()
-            district = cells[6].text.strip()
-            tehsil = cells[7].text.strip()
-            approved_date = cells[8].text.strip()
-            proposed_end_date = cells[9].text.strip()
-            extended_end_date = cells[10].text.strip()
-            website = cells[11].find("a")["href"] if cells[11].find("a") else ""
-
-            # Attempt to find and click the 'Details' link
+        for row_index in range(row_start, len(driver.find_elements(By.CSS_SELECTOR,
+                                                                   "#ContentPlaceHolder1_gv_ProjectList tbody tr"))):
             try:
-                details_link = cells[13].find("a")
-                if details_link:
-                    logger.info(f"Clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
-                    driver.find_element(By.ID, details_link['id']).click()
+                data = scrape_data(driver, row_index, page_count)
+                details_link = driver.find_element(By.ID, f"ContentPlaceHolder1_gv_ProjectList_lnk_View_{row_index}")
+                logger.info(f"Clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
+                details_link.click()
 
-                    # Wait for the details page to load
-                    WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
-                    )
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
+                )
 
-                    # Extract details from the details page
-                    project_status = driver.find_element(By.ID, "ContentPlaceHolder1_ApplicantType").get_attribute("value")
-                    detail_authorized_name = authorized_name
-                    project_address = driver.find_element(By.ID, "ContentPlaceHolder1_AadharNumber").text.strip()
-                    state = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_State_Name option[selected='selected']").text.strip()
-                    district_detail = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_District_Name option[selected='selected']").text.strip()
-                    tehsil_detail = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_Tehsil_Name option[selected='selected']").text.strip()
-                    email = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pemail").get_attribute("value")
-                    mobile = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pmobile").get_attribute("value")
+                project_status = driver.find_element(By.ID, "ContentPlaceHolder1_ApplicantType").get_attribute("value")
+                project_address = driver.find_element(By.ID, "ContentPlaceHolder1_AadharNumber").text.strip()
+                state = driver.find_element(By.CSS_SELECTOR,
+                                            "#ContentPlaceHolder1_State_Name option[selected='selected']").text.strip()
+                district_detail = driver.find_element(By.CSS_SELECTOR,
+                                                      "#ContentPlaceHolder1_District_Name option[selected='selected']").text.strip()
+                tehsil_detail = driver.find_element(By.CSS_SELECTOR,
+                                                    "#ContentPlaceHolder1_Tehsil_Name option[selected='selected']").text.strip()
+                email = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pemail").get_attribute("value")
+                mobile = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pmobile").get_attribute("value")
 
-                    # Append to the data list
-                    data_row = [
-                        project_name, registration_number, authorized_name, promoter_name, project_type, district,
-                        tehsil, approved_date, proposed_end_date, extended_end_date, website, project_status,
-                        detail_authorized_name, project_address, state, district_detail, tehsil_detail, email, mobile
-                    ]
+                data_row = [
+                    data['project_name'], data['registration_number'], data['authorized_name'], data['promoter_name'],
+                    data['project_type'], data['district'],
+                    data['tehsil'], data['approved_date'], data['proposed_end_date'], data['extended_end_date'],
+                    data['website'],
+                    project_status, data['authorized_name'], project_address, state, district_detail, tehsil_detail,
+                    email, mobile
+                ]
 
-                    # Write the row to the CSV file
-                    with open(output_file, mode='a', newline='', encoding='utf-8') as file:
-                        writer = csv.writer(file)
-                        writer.writerow(data_row)
+                with open(output_file, mode='a', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(data_row)
 
-                    logger.info(f"Data for row {row_index + 1} on page {start_page + page_count} written to CSV.")
+                logger.info(f"Data for row {row_index + 1} on page {start_page + page_count} written to CSV.")
+                driver.back()
 
-                    # Go back to the previous page
-                    logger.info("Returning to the previous page...")
-                    driver.back()
+                # Re-select '100' rows after returning to the list page
+                select_display_10_rows(driver)
+                select_display_100_rows(driver)
 
-                    # Manually navigate to the correct page again
-                    logger.info(f"Navigating back to page {start_page + page_count} after returning from details page...")
-                    for i in range(start_page + page_count - 1):
-                        next_button = driver.find_element(By.LINK_TEXT, 'Next')
-                        next_button.click()
-                        time.sleep(5)  # Wait time to ensure the page loads
+                navigate_to_page(driver, start_page + page_count, start_page + page_count - 1)
+                retry_row = None  # Clear retry flag once successful
 
-                else:
-                    logger.warning(f"No 'Details' link found for row {row_index + 1} on page {start_page + page_count}. Skipping...")
             except Exception as e:
-                logger.error(f"Error clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}: {str(e)}")
-                logger.info(f"Retrying the process for row {row_index + 1} on page {start_page + page_count}...")
-                retry_fetch_data(driver, row_index, page_count, start_page)
+                logger.error(
+                    f"Error clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}: {str(e)}")
+                retry_row = row_index  # Store the row to retry after restart
+                driver, retry_row = restart_browser_and_resume(row_index, page_count, start_page + page_count,
+                                                               retry_row)
+                break  # Exit the loop and restart after browser relaunch
 
-        # Check if there is a next page and the limit hasn't been reached
-        if page_count < no_of_pages - 1:
-            try:
-                next_button = driver.find_element(By.LINK_TEXT, 'Next')
-                logger.info(f"Navigating to page {start_page + page_count + 1}...")
-                next_button.click()
-                time.sleep(5)  # Updated wait time to 5 seconds
-            except Exception as e:
-                logger.info(f"No more pages to scrape or error occurred while clicking Next. Exiting loop at page {start_page + page_count}")
-                sys.exit(1)  # Exit when an error occurs
         page_count += 1
 
 finally:
-    # Close the browser
     logger.info("Closing the browser...")
     driver.quit()
 
