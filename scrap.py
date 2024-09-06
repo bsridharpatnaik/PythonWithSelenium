@@ -1,6 +1,7 @@
 import logging
 import time
 import csv
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -18,8 +19,12 @@ logger = logging.getLogger()
 chromedriver_path = '/Users/bsridharpatnaik/Downloads/chromedriver-mac-arm64/chromedriver'
 
 # Parameters
-start_page = 1  # Starting page number
+start_page = 5  # Starting page number
 no_of_pages = 1  # Number of pages to scrape
+start_row = 0  # Starting row number within a page
+
+# File to save the last processed row and page
+resume_file = 'resume_position.txt'
 
 # Calculate end page
 end_page = start_page + no_of_pages - 1
@@ -40,29 +45,25 @@ def initialize_browser():
 
 def select_display_100_rows(driver):
     """
-    Select 100 rows to display from the dropdown.
+    To handle UI bug, first select '10', then select '100' rows to display.
     """
     try:
-        logger.info("Selecting '100 rows per page' from the dropdown...")
+        logger.info("Selecting '10 rows per page' first to handle UI bug...")
         dropdown = Select(driver.find_element(By.NAME, "ContentPlaceHolder1_gv_ProjectList_length"))
+        dropdown.select_by_value("10")  # Select the option with value "10"
+        time.sleep(2)  # Wait for the page to refresh and display 10 rows
+
+        logger.info("Now selecting '100 rows per page' from the dropdown...")
         dropdown.select_by_value("100")  # Select the option with value "100"
         time.sleep(5)  # Wait for the page to refresh and display 100 rows
     except Exception as e:
         logger.error(f"Error selecting '100 rows per page': {str(e)}")
 
-def select_display_10_rows(driver):
-    """
-    Select 100 rows to display from the dropdown.
-    """
-    try:
-        logger.info("Selecting '100 rows per page' from the dropdown...")
-        dropdown = Select(driver.find_element(By.NAME, "ContentPlaceHolder1_gv_ProjectList_length"))
-        dropdown.select_by_value("10")  # Select the option with value "100"
-        time.sleep(5)  # Wait for the page to refresh and display 100 rows
-    except Exception as e:
-        logger.error(f"Error selecting '100 rows per page': {str(e)}")
 
 def navigate_to_page(driver, start_page, current_page):
+    """
+    Navigate to a specific page if not already on that page.
+    """
     logger.info(f"Navigating to page {start_page}...")
     while current_page < start_page:
         next_button = driver.find_element(By.LINK_TEXT, 'Next')
@@ -70,6 +71,22 @@ def navigate_to_page(driver, start_page, current_page):
         time.sleep(5)  # Wait for the page to load
         current_page += 1
     return current_page
+
+
+def save_resume_position(page, row):
+    """Save the last processed page and row to a file for resuming."""
+    with open(resume_file, 'w') as f:
+        f.write(f"{page},{row}")
+    logger.info(f"Saved resume position: Page {page}, Row {row}")
+
+
+def load_resume_position():
+    """Load the last processed page and row from the file."""
+    if os.path.exists(resume_file):
+        with open(resume_file, 'r') as f:
+            page, row = f.read().strip().split(',')
+            return int(page), int(row)
+    return start_page, start_row
 
 
 def restart_browser_and_resume(row_index, page_count, current_page, retry_row):
@@ -83,7 +100,7 @@ def restart_browser_and_resume(row_index, page_count, current_page, retry_row):
     driver.get(url)
 
     logger.info("Waiting for user interaction to select dropdown and enter security code...")
-    time.sleep(5)  # Wait for user interaction
+    time.sleep(60)  # Wait for user interaction
 
     # Navigate back to the correct page and select 100 rows
     logger.info(f"Retrying navigation to page {start_page + page_count}...")
@@ -93,7 +110,6 @@ def restart_browser_and_resume(row_index, page_count, current_page, retry_row):
     select_display_100_rows(driver)
     navigate_to_page(driver, start_page + page_count, current_page)
 
-    # Return the updated driver and retry flag set to true
     return driver, retry_row
 
 
@@ -140,6 +156,9 @@ with open(output_file, mode='w', newline='', encoding='utf-8') as file:
         'Tehsil (Detail)', 'Email', 'Mobile'
     ])
 
+# Load resume position if exists
+start_page, start_row = load_resume_position()
+
 # Start scraping
 try:
     driver = initialize_browser()
@@ -149,7 +168,7 @@ try:
     driver.get(url)
 
     logger.info("Waiting for 1 minute for user interaction...")
-    time.sleep(5)
+    time.sleep(60)
 
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_gv_ProjectList"))
@@ -167,13 +186,15 @@ try:
     while page_count < no_of_pages:
         logger.info(f"Scraping data from page {start_page + page_count}...")
 
-        row_start = retry_row if retry_row is not None else 0  # Start from the retry row if applicable
+        row_start = retry_row if retry_row is not None else start_row  # Start from the retry row or resume row
 
         for row_index in range(row_start, len(driver.find_elements(By.CSS_SELECTOR,
                                                                    "#ContentPlaceHolder1_gv_ProjectList tbody tr"))):
             try:
                 data = scrape_data(driver, row_index, page_count)
-                details_link = driver.find_element(By.ID, f"ContentPlaceHolder1_gv_ProjectList_lnk_View_{row_index}")
+                # Use XPath to find the details link based on the row position rather than ID
+                details_link = driver.find_element(By.XPATH,
+                                                   f"//*[@id='ContentPlaceHolder1_gv_ProjectList']/tbody/tr[{row_index + 1}]/td[14]/a")
                 logger.info(f"Clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
                 details_link.click()
 
@@ -208,11 +229,12 @@ try:
                 logger.info(f"Data for row {row_index + 1} on page {start_page + page_count} written to CSV.")
                 driver.back()
 
-                # Re-select '100' rows after returning to the list page
-                select_display_10_rows(driver)
+                # Re-select '100' rows after returning to the list page, but handle the bug
                 select_display_100_rows(driver)
 
-                navigate_to_page(driver, start_page + page_count, start_page + page_count - 1)
+                if start_page + page_count > 1:
+                    navigate_to_page(driver, start_page + page_count, start_page + page_count - 1)
+
                 retry_row = None  # Clear retry flag once successful
 
             except Exception as e:
