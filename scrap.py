@@ -116,7 +116,7 @@ def process_details_from_csv():
     driver.get(url)
 
     logger.info("Waiting for 1 minute for user interaction (select dropdown, enter security code)...")
-    time.sleep(5)  # Give time for manual interaction
+    time.sleep(5)
 
     set_dropdown_to_1000(driver)
 
@@ -129,13 +129,12 @@ def process_details_from_csv():
         header = rows[0]
         rows = rows[1:]  # Skip the header row
 
-        # Write additional columns to the CSV if not present
-        if len(header) == 11:
-            header.extend(
-                ['Project Status', 'Project Address', 'State', 'District (Detail)', 'Tehsil (Detail)', 'Email', 'Mobile'])
-            with open(detail_csv_file, mode='w', newline='', encoding='utf-8') as f:
+        # Check if the detail CSV file already exists, and open it in append mode
+        if not os.path.exists(detail_csv_file):
+            with open(detail_csv_file, mode='a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(header)
+                header.extend(['Project Status', 'Project Address', 'State', 'District (Detail)', 'Tehsil (Detail)', 'Email', 'Mobile'])
+                writer.writerow(header)  # Write the header only if the file does not exist
 
         for row_index, row_data in enumerate(rows):
             if row_index < resume_row:
@@ -148,10 +147,10 @@ def process_details_from_csv():
 
             if row is not None:
                 try:
-                    details_data = scrape_detail_page_for_row(driver, row_index_on_page, 0, 1)  # Adjusted params
+                    details_data = scrape_detail_page_for_row(driver, row_index_on_page, 0, 1)
                     full_row = row_data + details_data  # Append the details data to the row
 
-                    # Write the full row with details to the CSV
+                    # Append the full row with details to the CSV
                     with open(detail_csv_file, mode='a', newline='', encoding='utf-8') as f:
                         writer = csv.writer(f)
                         writer.writerow(full_row)
@@ -170,8 +169,8 @@ def process_details_from_csv():
                 except Exception:
                     logger.error(f"Error occurred at row {row_index + 1}. Restarting the browser...")
                     driver.quit()
-                    driver = initialize_browser()  # Restart the browser and continue
-                    break  # Restart from the last saved resume position
+                    process_details_from_csv()  # Restart browser and resume from the same row
+                    break  # Exit to allow restart after failure
             else:
                 logger.error(f"Row for project '{project_name}' not found, skipping...")
 
