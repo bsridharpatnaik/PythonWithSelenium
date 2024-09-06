@@ -22,7 +22,6 @@ csv_file = 'main_page_data.csv'
 detail_csv_file = 'details_page_data.csv'
 resume_file = 'resume_row.txt'
 
-
 # Initialize the WebDriver
 def initialize_browser():
     service = Service(chromedriver_path)
@@ -32,23 +31,20 @@ def initialize_browser():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-
 def set_dropdown_to_1000(driver):
     """Set the dropdown value to display 1000 rows in the DOM."""
     logger.info("Modifying the dropdown to display 1000 rows...")
     driver.execute_script(
-        "document.querySelector('select[name=\"ContentPlaceHolder1_gv_ProjectList_length\"]').innerHTML += '<option value=\"1000\">1000</option>';")
+        "document.querySelector('select[name=\"ContentPlaceHolder1_gv_ProjectList_length\"]').innerHTML += '<option value=\"10000\">10000</option>';")
     dropdown = Select(driver.find_element(By.NAME, "ContentPlaceHolder1_gv_ProjectList_length"))
-    dropdown.select_by_value("1000")
+    dropdown.select_by_value("10000")
     time.sleep(5)  # Wait for the page to refresh and load all rows
-
 
 def save_resume_position(row):
     """Save the last processed row number."""
     with open(resume_file, 'w') as f:
         f.write(str(row))
     logger.info(f"Saved resume position: Row {row}")
-
 
 def load_resume_position():
     """Load the last processed row number."""
@@ -57,11 +53,9 @@ def load_resume_position():
             return int(f.read().strip())
     return 0
 
-
 def find_row_by_project(driver, project_name, registration_number):
     """Search for a row by project name and registration number."""
-    logger.info(
-        f"Searching for project '{project_name}' with registration number '{registration_number}' on the page...")
+    logger.info(f"Searching for project '{project_name}' with registration number '{registration_number}' on the page...")
 
     # Loop through rows to find the correct project
     rows = driver.find_elements(By.CSS_SELECTOR, "#ContentPlaceHolder1_gv_ProjectList tbody tr")
@@ -74,71 +68,43 @@ def find_row_by_project(driver, project_name, registration_number):
             logger.info(f"Project found on row {row_index + 1}")
             return row_index, row
 
-    logger.error(
-        f"Project '{project_name}' with registration number '{registration_number}' not found on the current page.")
+    logger.error(f"Project '{project_name}' with registration number '{registration_number}' not found on the current page.")
     return None, None
 
-
-def scrape_detail_page_for_row(driver, row, row_index):
-    """Scrape additional data from the details page for a specific row."""
+def scrape_detail_page_for_row(driver, row_index, page_count, start_page):
+    """
+    Scrapes the details from the details page after clicking the 'Details' link in the row.
+    """
     try:
-        # Find all cells in the current row
-        cells = row.find_elements(By.TAG_NAME, 'td')
+        # Click on the 'Details' link using the row index
+        details_link = driver.find_element(By.ID, f"ContentPlaceHolder1_gv_ProjectList_lnk_View_{row_index}")
+        logger.info(f"Clicking 'Details' link for row {row_index + 1} on page {start_page + page_count}...")
 
-        # Assuming "Details" link is in the 14th column (index 13 in Python)
-        details_cell = cells[13]  # 14th column
+        # Click the 'Details' link
+        details_link.click()
 
-        # Check if there's a link inside the "Details" cell
-        details_link = details_cell.find_element(By.TAG_NAME, 'a')
+        # Wait for the details page to load
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
+        )
 
-        if details_link:
-            logger.info(f"Clicking on the details link for row {row_index + 1}...")
-            details_link.click()
+        # Extract details from the details page
+        project_status = driver.find_element(By.ID, "ContentPlaceHolder1_ApplicantType").get_attribute("value")
+        project_address = driver.find_element(By.ID, "ContentPlaceHolder1_AadharNumber").text.strip()
+        state = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_State_Name option[selected='selected']").text.strip()
+        district_detail = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_District_Name option[selected='selected']").text.strip()
+        tehsil_detail = driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_Tehsil_Name option[selected='selected']").text.strip()
 
-            # Wait for the details page to load
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_ApplicantType"))
-            )
+        # Fetch email and mobile
+        email = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pemail").get_attribute("value")
+        mobile = driver.find_element(By.ID, "ContentPlaceHolder1_txt_pmobile").get_attribute("value")
 
-            # Scrape data from the details page
-            project_status = driver.find_element(By.ID, "ContentPlaceHolder1_ApplicantType").get_attribute("value")
-            project_address = driver.find_element(By.ID, "ContentPlaceHolder1_AadharNumber").text.strip()
-            state = driver.find_element(By.CSS_SELECTOR,
-                                        "#ContentPlaceHolder1_State_Name option[selected='selected']").text.strip()
-            district_detail = driver.find_element(By.CSS_SELECTOR,
-                                                  "#ContentPlaceHolder1_District_Name option[selected='selected']").text.strip()
-            tehsil_detail = driver.find_element(By.CSS_SELECTOR,
-                                                "#ContentPlaceHolder1_Tehsil_Name option[selected='selected']").text.strip()
-
-            # Fetch email and mobile using JavaScript or with an explicit wait
-            try:
-                email_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_txt_pemail"))
-                )
-                email = email_element.get_attribute("value")
-            except Exception as e:
-                logger.warning(f"Email field not found or could not be fetched: {str(e)}")
-                email = "N/A"
-
-            try:
-                mobile_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "ContentPlaceHolder1_txt_pmobile"))
-                )
-                mobile = mobile_element.get_attribute("value")
-            except Exception as e:
-                logger.warning(f"Mobile field not found or could not be fetched: {str(e)}")
-                mobile = "N/A"
-
-            return [project_status, project_address, state, district_detail, tehsil_detail, email, mobile]
-
-        else:
-            logger.error(f"No 'Details' link found in row {row_index + 1}")
-            raise Exception("Details link not found")
+        # Return the extracted data
+        return [project_status, project_address, state, district_detail, tehsil_detail, email, mobile]
 
     except Exception as e:
-        logger.error(f"Error occurred while processing row {row_index + 1}: {e}")
+        logger.error(f"Error scraping details for row {row_index + 1} on page {start_page + page_count}: {str(e)}")
         raise
-
 
 def process_details_from_csv():
     """Process each row from the CSV and fetch details from the details page."""
@@ -147,7 +113,7 @@ def process_details_from_csv():
     driver.get(url)
 
     logger.info("Waiting for 1 minute for user interaction (select dropdown, enter security code)...")
-    time.sleep(5)
+    time.sleep(5)  # Give time for manual interaction
 
     set_dropdown_to_1000(driver)
 
@@ -163,8 +129,7 @@ def process_details_from_csv():
         # Write additional columns to the CSV if not present
         if len(header) == 11:
             header.extend(
-                ['Project Status', 'Project Address', 'State', 'District (Detail)', 'Tehsil (Detail)', 'Email',
-                 'Mobile'])
+                ['Project Status', 'Project Address', 'State', 'District (Detail)', 'Tehsil (Detail)', 'Email', 'Mobile'])
             with open(detail_csv_file, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
@@ -180,7 +145,7 @@ def process_details_from_csv():
 
             if row is not None:
                 try:
-                    details_data = scrape_detail_page_for_row(driver, row)
+                    details_data = scrape_detail_page_for_row(driver, row_index_on_page, 0, 1)  # Adjusted params
                     full_row = row_data + details_data  # Append the details data to the row
 
                     # Write the full row with details to the CSV
@@ -202,13 +167,12 @@ def process_details_from_csv():
                 except Exception:
                     logger.error(f"Error occurred at row {row_index + 1}. Restarting the browser...")
                     driver.quit()
-                    process_details_from_csv()  # Restart browser and resume from the same row
-                    break  # Exit to allow restart after failure
+                    driver = initialize_browser()  # Restart the browser and continue
+                    break  # Restart from the last saved resume position
             else:
                 logger.error(f"Row for project '{project_name}' not found, skipping...")
 
     driver.quit()
-
 
 if __name__ == "__main__":
     # Process details from the CSV file and append to the same file
