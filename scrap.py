@@ -26,6 +26,9 @@ resume_file = 'resume_row.txt'
 def initialize_browser():
     service = Service(chromedriver_path)
     options = webdriver.ChromeOptions()
+    options.add_argument("--headless")  # Enable headless mode
+    options.add_argument("--disable-gpu")  # Disable GPU acceleration for more speed
+    options.add_argument("--no-sandbox")
     options.add_argument("--window-size=1920,1080")
     logger.info("Initializing the webdriver...")
     driver = webdriver.Chrome(service=service, options=options)
